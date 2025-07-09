@@ -129,58 +129,67 @@ const getElectionVoters =async(req,res,next) => {
 
 /*==============================update election=====
 ===PATCH :api/elections/:id    ===protected(only admin) */
-const updateElection =async(req,res,next) => {
-     try {
-          // only admin can add election
-if (!req.user.isAdmin) {
-  return next(new HttpError("Only an admin can perform this action.", 403));
-}
+const updateElection = async (req, res, next) => {
+  try {
+    if (!req.user.isAdmin) {
+      return next(new HttpError("Only an admin can perform this action.", 403));
+    }
 
-const {id} =req.params;
-const {title,description} = req.body;
+    const { id } = req.params;
+    const { title, description } = req.body;
 
-if(!title || !description){
-    return next(new HttpError("Fill in all fields.",422))
-}
-     if(req.files.thumbnail){
-        const {thumbnail} = req.files;
-        if(thumbnail.size>1000000){
-            return next(new HttpError("Image size too big. Should be less than 1mb.",422))
-        }
-   
-        let fileName = thumbnail.name;
-fileName = fileName.split(".")
-fileName = fileName[0] + uuid() + "." +fileName[fileName.length-1]
- thumbnail.mv(path.join(__dirname, '..', 'uploads', fileName), async (err) => {
-  if (err) {
-    return next(new HttpError(err));
-  }
+    if (!title || !description) {
+      return next(new HttpError("Fill in all fields.", 422));
+    }
 
-  // Store image on Cloudinary
-  const result = await cloudinary.uploader.upload(
-    path.join(__dirname, '..', 'uploads', fileName),
-    { resource_type: "image" }
-  );
+    if (req.files && req.files.thumbnail) {
+      const { thumbnail } = req.files;
 
-  // Check if Cloudinary upload was successful
-  if (!result.secure_url) {
-    return next(new HttpError("Image upload to Cloudinary was not successful", 422));
-  }
+      if (thumbnail.size > 1000000) {
+        return next(new HttpError("Image size too big. Should be less than 1mb.", 422));
+      }
 
-  await ElectionModel.findByIdAndUpdate(id, {
-    title,
-    description,
-    thumbnail: result.secure_url
-  });
+      let fileName = thumbnail.name;
+      fileName = fileName.split(".");
+      fileName = fileName[0] + uuid() + "." + fileName[fileName.length - 1];
 
-  res.json("Election updated successfully", 200);
-});
+      const uploadPath = path.join(__dirname, '..', 'uploads', fileName);
 
-     }  
+      // Move file to uploads folder
+      await thumbnail.mv(uploadPath);
+
+      // Upload to Cloudinary
+      const result = await cloudinary.uploader.upload(uploadPath, {
+        resource_type: "image"
+      });
+
+      if (!result.secure_url) {
+        return next(new HttpError("Image upload to Cloudinary was not successful", 422));
+      }
+
+      await ElectionModel.findByIdAndUpdate(id, {
+        title,
+        description,
+        thumbnail: result.secure_url
+      });
+
+      return res.status(200).json("Election updated successfully");
+
+    } else {
+      // No new thumbnail, just update title & description
+      await ElectionModel.findByIdAndUpdate(id, {
+        title,
+        description
+      });
+
+      return res.status(200).json("Election updated successfully");
+    }
+
   } catch (error) {
+    console.error("Update election error:", error);
     return next(new HttpError(error));
   }
-}
+};
 
 /*==============================delete election=====
 ===DELETE :api/elections /:id   ===protected(only admin) */
