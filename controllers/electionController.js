@@ -129,59 +129,63 @@ const getElectionVoters =async(req,res,next) => {
 
 /*==============================update election=====
 ===PATCH :api/elections/:id    ===protected(only admin) */
-const updateElection =async(req,res,next) => {
-     try {
-          // only admin can add election
-if (!req.user.isAdmin) {
-  return next(new HttpError("Only an admin can perform this action.", 403));
-}
+const updateElection = async (req, res, next) => {
+  try {
+    if (!req.user.isAdmin) {
+      return next(new HttpError("Only an admin can perform this action.", 403));
+    }
 
-const {id} =req.params;
-const {title,description} = req.body;
+    const { id } = req.params;
+    const { title, description } = req.body;
 
-if(!title || !description){
-    return next(new HttpError("Fill in all fields.",422))
-}
-     if(req.files.thumbnail){
-        const {thumbnail} = req.files;
-        if(thumbnail.size>1000000){
-            return next(new HttpError("Image size too big. Should be less than 1mb.",422))
+    if (!title || !description) {
+      return next(new HttpError("Fill in all fields.", 422));
+    }
+
+    let thumbnailUrl;
+
+    if (req.files && req.files.thumbnail) {
+      const thumbnail = req.files.thumbnail;
+
+      if (thumbnail.size > 1000000) {
+        return next(new HttpError("Image size too big. Should be less than 1mb.", 422));
+      }
+
+      // Upload directly to Cloudinary from buffer / temp file
+      const result = await cloudinary.uploader.upload(
+        thumbnail.tempFilePath || thumbnail.path || thumbnail.data,  // best effort
+        {
+          resource_type: "image",
+          folder: "elections" // optional: organize in folder
         }
-   
-        let fileName = thumbnail.name;
-fileName = fileName.split(".")
-fileName = fileName[0] + uuid() + "." +fileName[fileName.length-1]
- thumbnail.mv(path.join(__dirname, '..', 'uploads', fileName), async (err) => {
-  if (err) {
-    return next(new HttpError(err));
-  }
+      );
 
-  // Store image on Cloudinary
-  const result = await cloudinary.uploader.upload(
-    path.join(__dirname, '..', 'uploads', fileName),
-    { resource_type: "image" }
-  );
+      if (!result.secure_url) {
+        return next(new HttpError("Image upload to Cloudinary failed", 422));
+      }
 
-  // Check if Cloudinary upload was successful
-  if (!result.secure_url) {
-    return next(new HttpError("Image upload to Cloudinary was not successful", 422));
-  }
+      thumbnailUrl = result.secure_url;
+    }
 
-  await ElectionModel.findByIdAndUpdate(id, {
-    title,
-    description,
-    thumbnail: result.secure_url
-  });
+    // Update the election: only update thumbnail if new one was uploaded
+    const updateData = {
+      title,
+      description
+    };
 
-  res.json("Election updated successfully", 200);
-});
+    if (thumbnailUrl) {
+      updateData.thumbnail = thumbnailUrl;
+    }
 
-     }  
+    await ElectionModel.findByIdAndUpdate(id, updateData);
+
+    res.status(200).json({ message: "Election updated successfully" });
+
   } catch (error) {
-    return next(new HttpError(error));
+    console.error(error);
+    return next(new HttpError("Something went wrong while updating election", 500));
   }
-}
-
+};
 /*==============================delete election=====
 ===DELETE :api/elections /:id   ===protected(only admin) */
 const removeElection =async(req,res,next) => {
