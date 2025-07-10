@@ -13,56 +13,52 @@ const CandidateModel = require('../models/candidateModel')
 ===POST :api/elections    ===protected(only admin) */
 
 const HttpError = require("../models/ErrorModel")
-const addElection = async (req,res,next) => {
- try {
-     // only admin can add election
- if (!req.user.isAdmin) {
-   return next(new HttpError("Only an admin can perform this action.", 403));
-}
-
-const { title, description } = req.body;
-if (!title || !description) {
-  return next(new HttpError("Fill all fields.", 422));
-}
-
-if (!req.files.thumbnail) {
-  return next(new HttpError("Choose a thumbnail.", 422));
-}
-
-const { thumbnail } = req.files;
-// image should be less than 1MB
-if (thumbnail.size > 1000000) {
-  return next(new HttpError("File size too big. Should be less than 1MB", 422));
-}
- 
-
-let fileName = thumbnail.name;
-fileName = fileName.split(".")
-fileName = fileName[0] + uuid() + "." +fileName[fileName.length-1]
-
-//upload file to uploads folder
-await thumbnail.mv(path.join(__dirname,'..','uploads',fileName), async(err)=>{
-    if(err){
-        return next(HttpError(err))
+const addElection = async (req, res, next) => {
+  try {
+    if (!req.user.isAdmin) {
+      return next(new HttpError("Only an admin can perform this action.", 403));
     }
-    //store image on cloudinary
- const result = await cloudinary.uploader.upload(path.join(__dirname,"..",
-    "uploads",fileName),{resource_type: "image"}
- )
- if(!result.secure_url){
-    return next(new HttpError("couldn't upload image to cloudinary",422))
- }
 
- const newElection = await ElectionModel.create({title,description,
-    thumbnail:result.secure_url
- })
- res.json(newElection)
-})
- } catch (error) {
-    return next(new HttpError(error))
- }
+    const { title, description } = req.body;
+    if (!title || !description) {
+      return next(new HttpError("Fill all fields.", 422));
+    }
 
-}
+    if (!req.files || !req.files.thumbnail) {
+      return next(new HttpError("Choose a thumbnail.", 422));
+    }
+
+    const { thumbnail } = req.files;
+    if (thumbnail.size > 1000000) {
+      return next(new HttpError("File size too big. Should be less than 1MB.", 422));
+    }
+
+    // Upload directly to Cloudinary from buffer
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { resource_type: "image" },
+      async (error, result) => {
+        if (error || !result.secure_url) {
+          return next(new HttpError("Couldn't upload image to Cloudinary", 422));
+        }
+
+        const newElection = await ElectionModel.create({
+          title,
+          description,
+          thumbnail: result.secure_url
+        });
+
+        return res.status(201).json(newElection);
+      }
+    );
+
+    // Start upload
+    uploadStream.end(thumbnail.data);
+
+  } catch (error) {
+    console.error(error);
+    return next(new HttpError(error.message || "Election creation failed.", 500));
+  }
+};
 
 /*==============================get all election=====
 ===GET :api/elections    ===protected */

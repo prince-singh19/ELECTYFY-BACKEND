@@ -13,72 +13,69 @@ const VoterModel = require('../models/voterModel')
 
 /*==============================Add candidates=====
 ===POST :api/candidates    ===protected (only admin)*/
-const addCandidate = async (req,res,next) => {
-   try {
-      // only admin can add election
- if (!req.user.isAdmin) {
-   return next(new HttpError("Only an admin can perform this action.", 403));
-}
-const { fullName, motto, currentElection } = req.body;
-
-if (!fullName || !motto) {
-  return next(new HttpError("Fill in all fields", 422));
-}
-
-if (!req.files.image) {
-  return next(new HttpError("Choose an image.", 422));
-}
-
-const { image } = req.files;
-
-// Check file size (limit: 1MB)
-if (image.size > 1000000) {
-  return next(new HttpError("Image size should be less than 1MB", 422));
-}
-
-let fileName = image.name;
-fileName = fileName.split(".")
-fileName = fileName[0] + uuid() + "." +fileName[fileName.length-1]
-
-
- image.mv(path.join(__dirname,'..','uploads',fileName), async(err)=>{
-    if(err){
-        return next(HttpError(err))
+const addCandidate = async (req, res, next) => {
+  try {
+    // only admin can add candidate
+    if (!req.user.isAdmin) {
+      return next(new HttpError("Only an admin can perform this action.", 403));
     }
-    //store image on cloudinary
- const result = await cloudinary.uploader.upload(path.join(__dirname,"..",
-    "uploads",fileName),{resource_type: "image"}
- )
- if(!result.secure_url){
-    return next(new HttpError("couldn't upload image to cloudinary",422))
- }
 
- const newCandidate = await CandidateModel.create({fullName,motto,
-    image:result.secure_url, election:currentElection
- })
-// Get election and push candidate to election
-let election = await ElectionModel.findById(currentElection);
+    const { fullName, motto, currentElection } = req.body;
 
-const sess = await mongoose.startSession();
-sess.startTransaction();
+    if (!fullName || !motto) {
+      return next(new HttpError("Fill in all fields", 422));
+    }
 
-await newCandidate.save({ session: sess });
+    if (!req.files || !req.files.image) {
+      return next(new HttpError("Choose an image.", 422));
+    }
 
-election.candidates.push(newCandidate);
+    const { image } = req.files;
 
-await election.save({ session: sess });
+    // Check file size (limit: 1MB)
+    if (image.size > 1000000) {
+      return next(new HttpError("Image size should be less than 1MB", 422));
+    }
 
-await sess.commitTransaction();
+    // Upload directly to Cloudinary from buffer
+    const uploadStream = cloudinary.uploader.upload_stream(
+      { resource_type: "image" },
+      async (error, result) => {
+        if (error || !result.secure_url) {
+          return next(new HttpError("Couldn't upload image to Cloudinary", 422));
+        }
 
-res.status(201).json("Candidate added successfully");
+        const newCandidate = new CandidateModel({
+          fullName,
+          motto,
+          image: result.secure_url,
+          election: currentElection
+        });
 
-})
+        // Start session to add candidate to election
+        const sess = await mongoose.startSession();
+        sess.startTransaction();
 
-   } catch (error) {
-    return next(new HttpError(error))
-   }
-}
+        await newCandidate.save({ session: sess });
 
+        const election = await ElectionModel.findById(currentElection);
+        election.candidates.push(newCandidate);
+
+        await election.save({ session: sess });
+
+        await sess.commitTransaction();
+
+        return res.status(201).json("Candidate added successfully");
+      }
+    );
+
+    uploadStream.end(image.data);
+
+  } catch (error) {
+    console.error(error);
+    return next(new HttpError(error.message || "Candidate creation failed.", 500));
+  }
+};
 
 /*==============================Get Candidate=====
 ===GET :api/candidates/:id    ===protected */
