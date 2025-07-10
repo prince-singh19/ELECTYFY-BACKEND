@@ -142,50 +142,43 @@ const updateElection = async (req, res, next) => {
       return next(new HttpError("Fill in all fields.", 422));
     }
 
-    let thumbnailUrl;
-
     if (req.files && req.files.thumbnail) {
-      const thumbnail = req.files.thumbnail;
-
+      const { thumbnail } = req.files;
       if (thumbnail.size > 1000000) {
-        return next(new HttpError("Image size too big. Should be less than 1mb.", 422));
+        return next(new HttpError("Image size too big. Should be less than 1MB.", 422));
       }
 
-      // Upload directly to Cloudinary from buffer / temp file
-      const result = await cloudinary.uploader.upload(
-        thumbnail.tempFilePath || thumbnail.path || thumbnail.data,  // best effort
-        {
-          resource_type: "image",
-          folder: "elections" // optional: organize in folder
+      // Upload directly to cloudinary from buffer
+      const uploadStream = cloudinary.uploader.upload_stream(
+        { resource_type: "image" },
+        async (error, result) => {
+          if (error || !result.secure_url) {
+            return next(new HttpError("Image upload to Cloudinary failed", 422));
+          }
+
+          await ElectionModel.findByIdAndUpdate(id, {
+            title,
+            description,
+            thumbnail: result.secure_url
+          });
+
+          return res.status(200).json("Election updated successfully");
         }
       );
 
-      if (!result.secure_url) {
-        return next(new HttpError("Image upload to Cloudinary failed", 422));
-      }
-
-      thumbnailUrl = result.secure_url;
+      // pipe the buffer
+      uploadStream.end(thumbnail.data);
+    } else {
+      // No thumbnail: only update title & description
+      await ElectionModel.findByIdAndUpdate(id, { title, description });
+      return res.status(200).json("Election updated successfully");
     }
-
-    // Update the election: only update thumbnail if new one was uploaded
-    const updateData = {
-      title,
-      description
-    };
-
-    if (thumbnailUrl) {
-      updateData.thumbnail = thumbnailUrl;
-    }
-
-    await ElectionModel.findByIdAndUpdate(id, updateData);
-
-    res.status(200).json({ message: "Election updated successfully" });
-
   } catch (error) {
     console.error(error);
-    return next(new HttpError("Something went wrong while updating election", 500));
+    return next(new HttpError(error.message || "Failed to update election."));
   }
 };
+
 /*==============================delete election=====
 ===DELETE :api/elections /:id   ===protected(only admin) */
 const removeElection =async(req,res,next) => {

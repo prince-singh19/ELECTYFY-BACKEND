@@ -38,6 +38,8 @@ const newVoter = await VoterModel.create({
   isAdmin
 });
 
+
+
 res.status(201).json(`New voter ${fullName} created.`);
 
 
